@@ -1,0 +1,15 @@
+{
+  "name": "estres-calorico-push-server",
+  "version": "1.0.0",
+  "description": "Servidor backend de notificaciones Web Push 24/7 para alerta de estrés calórico en ganado",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "web-push": "^3.6.7"
+  }
+}
+

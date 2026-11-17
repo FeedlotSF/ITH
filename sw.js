@@ -1,11 +1,10 @@
-const CACHE_NAME = 'estres-calorico-v2';
+const CACHE_NAME = 'estres-calorico-v3';
 const ASSETS_TO_CACHE = [
   './',
-  './estres-calorico.html',
+  './index.html',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png',
-  './Ícono ganadero de riesgo térmico.png'
+  './icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -31,7 +30,6 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Las llamadas al pronóstico del tiempo y al backend de push no se cachean de forma estática
   if (event.request.url.includes('open-meteo.com') || event.request.url.includes('/api/')) {
     event.respondWith(
       fetch(event.request).catch(() => caches.match(event.request))
@@ -39,7 +37,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Archivos de la app (HTML, CSS, JS, imágenes, fuentes)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
@@ -58,13 +55,12 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch(() => {
-        return caches.match('./estres-calorico.html');
+        return caches.match('./index.html');
       });
     })
   );
 });
 
-// Manejador del evento PUSH remoto (cuando llega la notificación con app cerrada)
 self.addEventListener('push', (event) => {
   let data = {
     title: '⚠️ Alerta de Estrés Calórico',
@@ -86,7 +82,7 @@ self.addEventListener('push', (event) => {
     icon: data.icon || 'icon-192.png',
     badge: data.badge || 'icon-192.png',
     vibrate: [200, 100, 200, 100, 200],
-    data: { url: data.url || './estres-calorico.html' },
+    data: { url: data.url || './index.html' },
     requireInteraction: true
   };
 
@@ -95,15 +91,14 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// Al tocar la notificación en el celular, abrir la app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : './estres-calorico.html';
+  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : './index.html';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url.includes('estres-calorico') && 'focus' in client) {
+        if ((client.url.includes('index.html') || client.url.endsWith('/ITH/')) && 'focus' in client) {
           return client.focus();
         }
       }

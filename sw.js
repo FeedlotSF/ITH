@@ -1,11 +1,12 @@
 const CACHE_NAME = 'estres-calorico-v4';
 const ASSETS_TO_CACHE = [
   './',
-  './index.html',
+  './estres-calorico.html',
   './decision.js',
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
+  './Ícono ganadero de riesgo térmico.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -58,7 +59,7 @@ self.addEventListener('fetch', (event) => {
         cachePut(req, res.clone());
         return res;
       }).catch(() => {
-        return caches.match('./index.html').then((r) => r || caches.match('./'));
+        return caches.match('./estres-calorico.html').then((r) => r || caches.match('./'));
       })
     );
     return;
@@ -106,7 +107,7 @@ self.addEventListener('push', (event) => {
     icon: data.icon || 'icon-192.png',
     badge: data.badge || 'icon-192.png',
     vibrate: [200, 100, 200, 100, 200],
-    data: { url: data.url || './index.html' },
+    data: { url: data.url || './estres-calorico.html' },
     requireInteraction: true
   };
 
@@ -118,12 +119,12 @@ self.addEventListener('push', (event) => {
 // Al tocar la notificación en el celular, abrir la app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : './index.html';
+  const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : './estres-calorico.html';
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if (client.url.indexOf(self.location.origin) === 0 && 'focus' in client) {
+        if (client.url.includes('estres-calorico') && 'focus' in client) {
           return client.focus();
         }
       }

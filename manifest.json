@@ -2,7 +2,7 @@
   "name": "Estrés Calórico · Riego",
   "short_name": "Estrés Calórico",
   "description": "Monitoreo de estrés calórico e ITH ganadero para riego y bienestar animal",
-  "start_url": "./index.html",
+  "start_url": "./estres-calorico.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -21,6 +21,13 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "Ícono ganadero de riesgo térmico.png",
+      "sizes": "1254x1254",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
+

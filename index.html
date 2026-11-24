@@ -145,10 +145,11 @@ Recibí alertas en el celular cuando el ITH supere el umbral de alerta (75) o pe
 <input type="text" id="q" placeholder="Buscar localidad (ej. Chascomús)" style="margin-top:8px">
 <div class="res" id="res"></div></details>
 <details><summary>Cómo se calcula</summary>
-<p>ITH = 0,8·T + (HR/100)·(T − 14,4) + 46,4. La recomendación principal usa solo el ITH base y no depende del interruptor; la corrección únicamente agrega una advertencia de vigilancia. El interruptor solo cambia lo que se dibuja. La corrección suma la mitad de la ecuación de Mader (2006: 4,51 − 1,992·viento + 0,0068·radiación), con tope de ±2 puntos y sin subir más que la mitad del aporte de la radiación. El viento del pronóstico es a 10 m y se reduce 25% para estimarlo a la altura del animal. Umbrales en bovinos de carne: 75 alerta, 79 peligro, 84 emergencia. Regla de aspersión basada en ensayos de INIA (Uruguay): activar los aspersores cuando el ITH previsto supera 75, antes del pico de la tarde. La radiación de las horas ya transcurridas se toma de satélite (GOES-19, vía Open-Meteo) y la futura del modelo corregido con la relación satélite/modelo de las últimas horas, que se mantiene 3 h y se desvanece hasta las 12 h; si el satélite no responde, se usa el modelo. Es una guía; confirmá mirando a los animales (jadeo, babeo, boca abierta).</p>
+<p>ITH = 0,8·T + (HR/100)·(T − 14,4) + 46,4. La recomendación principal usa solo el ITH base y no depende del interruptor; la corrección únicamente agrega una advertencia de vigilancia. El interruptor solo cambia lo que se dibuja. La corrección suma la mitad de la ecuación de Mader (2006: 4,51 − 1,992·viento + 0,0068·radiación), con tope de ±2 puntos y sin subir más que la mitad del aporte de la radiación. El viento del pronóstico es a 10 m y se reduce 25% para estimarlo a la altura del animal. Umbrales en bovinos de carne: 75 alerta, 79 peligro, 84 emergencia. Regla de aspersión basada en ensayos de INIA (Uruguay): activar los aspersores cuando el ITH previsto supera 75, antes del pico de la tarde. La radiación de las horas ya transcurridas se toma de satélite (GOES-19, vía Open-Meteo) y la futura del modelo corregido con la relación satélite/modelo de las últimas horas, que se mantiene 3 h y se desvanece hasta las 12 h; si el satélite no responde, se usa el modelo. El valor actual usa la radiación instantánea del satélite con resolución nativa (pasos de ~10 min, ~20 min de demora); el historial y la franja usan el promedio horario. Es un dato satelital de ~2 km, no una medición en el corral. Es una guía; confirmá mirando a los animales (jadeo, babeo, boca abierta).</p>
 <p>Datos: Open-Meteo (CC BY 4.0, uso no comercial gratuito). Pronóstico de modelo, no estación propia.</p></details>
 </div>
 </main>
+<script src="decision.js"></script>
 <script>
 var $=function(i){return document.getElementById(i)};
 var WF=0.75,LS=localStorage,VBH=312;
@@ -157,125 +158,141 @@ var adjOn=LS.getItem('adj')!=='0';$('adj').checked=adjOn;
 var data=null,selHour=null,wantAnim=false,lastPos=null,dragging=false;
 var chartPts=[],chartGeom=null,animTok=0;
 
-function num(x,d){var v=parseFloat(x);return isFinite(v)?v:(d||0)}
-function pad2(n){return n<10?'0'+n:''+n}
-function thi(T,H){return 0.8*T+(H/100)*(T-14.4)+46.4}
+// La lógica vive en decision.js y la comparte el servidor de notificaciones.
+var D=window.ECDecision;
+function num(x,d){return D.num(x,d)}
+function pad2(n){return D.pad2(n)}
+function thi(T,H){return D.thi(T,H)}
 function tFor(H,v){var lo=-10,hi=80;for(var i=0;i<40;i++){var m=(lo+hi)/2;if(thi(m,H)<v)lo=m;else hi=m}return lo}
-function corr(T,H,W,R){
- var b=thi(T,H);
- R=Math.max(0,num(R));
- // Corrección de Mader (2006) amortiguada: 4,51 - 1,992*viento + 0,0068*rad, aplicada a la mitad y acotada a ±2 puntos.
- // La suba no puede superar la mitad del aporte de la radiación (sin sol, el viento puede aliviar pero no empeorar).
- var a=4.51-1.992*num(W)*WF+0.0068*R,d=0.5*a;
- d=Math.min(d,0.5*0.0068*R,2);d=Math.max(d,-2);
- return b+d;
-}
+function corr(T,H,W,R){return D.corr(T,H,W,R,WF)}
 // adjThi: valor que se dibuja (gráfico, franja, encabezado). La recomendación NO depende del interruptor: usa siempre thi() y corr().
 function adjThi(T,H,W,R){return adjOn?corr(T,H,W,R):thi(T,H)}
 var OFF=0;
-function TH(i){return [75,79,84][i||0]+OFF}
-function zone(v){return v>=TH(2)?3:v>=TH(1)?2:v>=TH(0)?1:0}
+function TH(i){return D.threshold(i||0,OFF)}
+function zone(v){return D.zone(v,OFF)}
 var ZN=['Confort','Alerta','Peligro','Emergencia'],ZC=['var(--ok)','var(--al)','var(--pe)','var(--em)'];
 function hh(t){return t.slice(11,13)+':00'}
-function prevDay(ds){var dt=new Date(Date.UTC(+ds.slice(0,4),+ds.slice(5,7)-1,+ds.slice(8,10)));dt.setUTCDate(dt.getUTCDate()-1);return dt.toISOString().slice(0,10)}
+function prevDay(ds){return D.prevDay(ds)}
 function fmtT(ts){if(!ts)return'';var d=new Date(ts);return d.getDate()+'/'+(d.getMonth()+1)+' '+pad2(d.getHours())+':'+pad2(d.getMinutes())}
+// Hora local del campo calculada con el desfase guardado (no con la zona del celular).
+function fieldNowKey(){
+ var off=num(data._off,num(data.utc_offset_seconds,-(new Date().getTimezoneOffset()*60)));
+ return D.fieldNowKey(off,Date.now());
+}
+function fmtHM(ts,off){var d=new Date(num(ts,Date.now())+num(off,0)*1000);return pad2(d.getUTCHours())+':'+pad2(d.getUTCMinutes())}
+function ageLabel(ms){var h=ms/3600000;if(h>=1)return Math.round(h)+' h';var m=Math.max(1,Math.round(ms/60000));return m+' min'}
+function keyAgeHours(a,b){return D.keyAgeHours(a,b)}
+// Sin conexión la persistencia de nubes pierde validez con las horas transcurridas desde la descarga.
+function applyOfflineRadiation(nowKey){D.applyOfflineRadiation(data,nowKey)}
 
 function fetchW(){
- $('place').textContent=loc.name;$('upd').textContent='Actualizando…';
+ $('place').textContent=loc.name;
+ if(navigator.onLine===false){showFallback();return}
+ $('upd').textContent='Actualizando…';$('upd').style.color='';
  var u='https://api.open-meteo.com/v1/forecast?latitude='+encodeURIComponent(loc.lat)+'&longitude='+encodeURIComponent(loc.lon)+
  '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,shortwave_radiation,precipitation'+
  '&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,shortwave_radiation'+
- '&wind_speed_unit=ms&timezone=auto&past_days=1&forecast_days=2';
- fetch(u).then(function(r){if(!r.ok)throw 0;return r.json()})
+ '&wind_speed_unit=ms&timezone=auto&past_days=1&forecast_days=3';
+ fetch(u,{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()})
  .then(function(j){
   if(!j||!j.current||!j.hourly||!j.hourly.time||!j.hourly.time.length)throw 0;
   j._ts=Date.now();
-  return addSat(j).then(function(){data=j;LS.setItem('cache',JSON.stringify({loc:loc,j:j,t:j._ts}));render()});
+  return addSat(j).then(function(){
+   data=j;data._offline=false;data._downloadedAt=j._ts;
+   if(j.utc_offset_seconds!=null)data._off=j.utc_offset_seconds;
+   // Guardamos siempre el último pronóstico completo, con la hora de descarga y el desfase del campo.
+   LS.setItem('cache',JSON.stringify({loc:loc,j:j,t:j._ts,off:j.utc_offset_seconds}));
+   render();
+  });
  }).catch(showFallback);
 }
-// Radiación observada por satélite (GOES-19, Open-Meteo Satellite API). Reemplaza la del modelo en las horas ya transcurridas.
-// Si el servicio falla o no devuelve datos, se conserva la radiación del modelo.
+// Radiación observada por satélite (GOES-19, Open-Meteo Satellite API).
+// El promedio horario alimenta el historial y la franja; la radiación instantánea nativa alimenta el valor "actual".
 function addSat(j){
+ return Promise.all([addSatHourly(j),addSatInstant(j)]).then(function(){D.finalizeSatellite(j)});
+}
+// Promedio horario: reemplaza la radiación del modelo en las horas ya transcurridas y calcula la relación
+// satélite/modelo para proyectar las horas futuras. Si el servicio falla, se conserva el modelo.
+function addSatHourly(j){
  var su='https://satellite-api.open-meteo.com/v1/archive?latitude='+encodeURIComponent(loc.lat)+'&longitude='+encodeURIComponent(loc.lon)+
  '&hourly=shortwave_radiation&models=satellite_radiation_seamless&timezone=auto&past_days=1&forecast_days=1';
  var ctl=(typeof AbortController!=='undefined')?new AbortController():null,tmo=setTimeout(function(){if(ctl)ctl.abort()},8000);
- return fetch(su,ctl?{signal:ctl.signal}:{}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(sat){
-  clearTimeout(tmo);
-  var st=sat&&sat.hourly&&sat.hourly.time,sv=sat&&sat.hourly&&sat.hourly.shortwave_radiation;
-  if(!st||!sv)return;
-  var map={};for(var i=0;i<st.length;i++){var v=sv[i];if(v!==null&&v!==undefined&&isFinite(v))map[st[i]]=+v}
-  var nowH=j.current.time.slice(0,13),last=null,iNow=0,rad=j.hourly.shortwave_radiation,orig=rad.slice(),ss=0,sm=0,cnt=0;
-  for(var k=0;k<j.hourly.time.length;k++){var t=j.hourly.time[k];
-   if(t.slice(0,13)<=nowH){iNow=k;
-    if(map[t]!==undefined){rad[k]=map[t];last=t}}}
-  if(!last)return;
-  j.current.shortwave_radiation=map[last];j._sat=last;
-  // Proyección: el modelo no ve las nubes actuales. Se calcula cuánto sobreestima respecto del satélite en las
-  // últimas horas con sol y se aplica esa relación a las horas futuras, manteniéndola 3 h y volviendo al modelo de forma gradual hasta las 12 h.
-  for(var q=iNow;q>=0&&cnt<3;q--){var tq=j.hourly.time[q];
-   if(map[tq]!==undefined&&num(orig[q])>100){ss+=map[tq];sm+=num(orig[q]);cnt++}}
-  if(cnt&&sm>0){var r=Math.max(0.1,Math.min(1.3,ss/sm));j._r=r;
-   for(var f=iNow+1;f<rad.length;f++){var hf=f-iNow,w=hf<=3?1:Math.max(0,1-(hf-3)/9);rad[f]=Math.max(0,num(orig[f])*(1+(r-1)*w))}}
+ return fetch(su,ctl?{signal:ctl.signal,cache:'no-store'}:{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(sat){
+  clearTimeout(tmo);D.applySatelliteHourly(j,sat);
+ }).catch(function(){clearTimeout(tmo)});
+}
+// Valor actual: shortwave_radiation_instant con resolución temporal nativa (pasos de ~10 min).
+// Se toma el último dato disponible; GOES-19 tiene ~20 min de demora y ~2 km de resolución.
+// Es una referencia satelital, no una medición en el corral. No se usa para el historial horario.
+function addSatInstant(j){
+ var su='https://satellite-api.open-meteo.com/v1/archive?latitude='+encodeURIComponent(loc.lat)+'&longitude='+encodeURIComponent(loc.lon)+
+ '&hourly=shortwave_radiation_instant&models=satellite_radiation_seamless&timezone=auto&temporal_resolution=native&past_hours=6&forecast_hours=1';
+ var ctl=(typeof AbortController!=='undefined')?new AbortController():null,tmo=setTimeout(function(){if(ctl)ctl.abort()},8000);
+ return fetch(su,ctl?{signal:ctl.signal,cache:'no-store'}:{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()}).then(function(sat){
+  clearTimeout(tmo);D.applySatelliteInstant(j,sat);
  }).catch(function(){clearTimeout(tmo)});
 }
 function showFallback(){
  var c=null;try{c=JSON.parse(LS.getItem('cache')||'null')}catch(e){}
  var same=c&&c.j&&c.j.hourly&&c.loc&&Math.abs(num(c.loc.lat)-num(loc.lat))<0.01&&Math.abs(num(c.loc.lon)-num(loc.lon))<0.01;
- if(same){data=c.j;render('Sin conexión · datos del '+fmtT(c.t));return}
+ if(same){
+  data=c.j;data._offline=true;
+  data._downloadedAt=num(c.t,num(data._ts,Date.now()));data._ts=data._downloadedAt;
+  if(c.off!=null)data._off=num(c.off,data.utc_offset_seconds);
+  render(null,{offline:true,downloadedAt:data._downloadedAt});return;
+ }
  $('rec').style.borderColor='var(--pe)';
  $('rec').innerHTML='<div class="big">Sin datos</div><p>No se pudo conectar con el pronóstico. Revisá la señal y volvé a intentar.</p><button id="retry">Reintentar</button>';
  $('retry').onclick=fetchW;
- $('upd').textContent='Sin conexión · tocar para reintentar';
+ $('upd').textContent='Sin conexión · tocar para reintentar';$('upd').style.color='';
  $('upd').onclick=fetchW;
 }
 
-function render(note){
- var c=data.current,h=data.hourly,n=h.time.length;
- var now=c.time.slice(0,13),idx=0;
- for(var i=0;i<n;i++){if(h.time[i].slice(0,13)<=now)idx=i}
- function at(i){return {t:h.time[i],T:num(h.temperature_2m[i]),H:num(h.relative_humidity_2m[i]),W:num(h.wind_speed_10m[i]),R:num(h.shortwave_radiation[i])}}
- var cur={T:num(c.temperature_2m),H:num(c.relative_humidity_2m),W:num(c.wind_speed_10m),R:num(c.shortwave_radiation)};
- cur.v=adjThi(cur.T,cur.H,cur.W,cur.R);cur.z=zone(cur.v);
- var win=[];for(var k=idx+1;k<=idx+12&&k<n;k++){var a=at(k);a.v=adjThi(a.T,a.H,a.W,a.R);a.b=thi(a.T,a.H);a.c=corr(a.T,a.H,a.W,a.R);a.z=zone(a.v);win.push(a)}
- cur.b=thi(cur.T,cur.H);cur.c=corr(cur.T,cur.H,cur.W,cur.R);
- var peak=win.reduce(function(m,a){return a.v>m.v?a:m},{v:-99});
- if(cur.v>peak.v)peak={v:cur.v,t:c.time,T:cur.T,H:cur.H,W:cur.W,R:cur.R};
- var bpeak=win.reduce(function(m,a){return a.b>m?a.b:m},cur.b);
- var firstAl=null;for(var k2=0;k2<win.length;k2++){if(win[k2].b>=TH(0)){firstAl=win[k2];break}}
- var adjL=[];if(cur.c>=TH(0))adjL.push({t:c.time,v:cur.c,W:cur.W,R:cur.R});
- win.forEach(function(a){if(a.c>=TH(0))adjL.push({t:a.t,v:a.c,W:a.W,R:a.R})});
- var date=c.time.slice(0,10),pd=prevDay(date),tn=[];
- for(var q=0;q<n;q++){var tt=h.time[q];var d=tt.slice(0,10),hr=+tt.slice(11,13);
-  if((d===pd&&hr>=21)||(d===date&&hr<=6))tn.push(num(h.temperature_2m[q]))}
- var tmin=tn.length?Math.min.apply(null,tn):null;
- var rain=num(c.precipitation)>0.2;
-
- // La recomendación principal usa solo el ITH base; la corrección por sol y viento agrega únicamente una advertencia.
- var blocks=[],curB=null;
- for(var b=0;b<n;b++){
-  if(h.time[b].slice(0,10)!==date)continue;
-  var ab=at(b),vb=thi(ab.T,ab.H),hb=+ab.t.slice(11,13);
-  if(vb>=TH(0)){if(!curB)curB={s:hb,e:hb+1};else curB.e=hb+1}
-  else if(curB){blocks.push(curB);curB=null}
+function render(note,opts){
+ opts=opts||{};
+ var offline=opts.offline!=null?opts.offline:!!data._offline;
+ var h=data.hourly,n=h.time.length;
+ var c=data.current||{};
+ var nowKey=offline?fieldNowKey():((c.time?c.time.slice(0,13):'')||fieldNowKey());
+ if(offline)applyOfflineRadiation(nowKey);
+ var firstKey=n?h.time[0].slice(0,13):nowKey,lastKey=n?h.time[n-1].slice(0,13):nowKey;
+ var outOfRange=nowKey<firstKey||nowKey>lastKey;
+ var dl=num(opts.downloadedAt,num(data._ts,num(data._downloadedAt,Date.now())));
+ var ageMs=Math.max(0,Date.now()-dl),ageH=ageMs/3600000;
+ var off=num(data._off,num(data.utc_offset_seconds,-(new Date().getTimezoneOffset()*60)));
+ var warnText='Sin conexión: pronóstico de las '+fmtHM(dl,off)+' (hace '+ageLabel(ageMs)+')';
+ var stale=offline&&(outOfRange||ageH>12);
+ if(stale){
+  $('rec').style.borderColor='var(--em)';
+  $('rec').innerHTML='<div class="big" style="color:var(--em)">Sin datos vigentes</div><p>Sin conexión y el pronóstico guardado ya no cubre la hora actual.</p><p class="sub">'+warnText+'</p>';
+  $('upd').textContent=warnText;$('upd').style.color='#C9453B';
+  $('ith').textContent='Sin datos vigentes';
+  $('kT').textContent='—';$('kH').textContent='—';$('kW').textContent='—';$('kR').textContent='—';
+  $('chart').innerHTML='';chartPts=[];chartGeom=null;
+  $('strip').innerHTML='';$('lab').innerHTML='';
+  $('cinfo').textContent='Sin datos vigentes sin conexión.';
+  return;
  }
- if(curB)blocks.push(curB);
- var rangeTxt=blocks.map(function(bk){return pad2(bk.s)+':00 a '+(bk.e>=24?'24:00':pad2(bk.e)+':00')}).join(' y ');
- var rangeH=blocks.reduce(function(s,bk){return s+(bk.e-bk.s)},0);
-
- var col,big,msg,vigilar=false;
- var adjPk=adjL.reduce(function(m,a){return a.v>m.v?a:m},{v:-99});
+ function at(i){return {t:h.time[i],T:num(h.temperature_2m[i]),H:num(h.relative_humidity_2m[i]),W:num(h.wind_speed_10m[i]),R:num(h.shortwave_radiation[i])}}
+ // La decisión sale de decision.js, la misma que usa el servidor de notificaciones.
+ var r=D.compute(data,{nowKey:nowKey,offset:OFF,adjust:adjOn,windFactor:WF,useCurrent:!offline});
+ var idx=r.idx,cur=r.now,bpeak=r.bpeak,firstAl=r.firstAlert;
+ var date=r.date,tmin=r.tmin,rain=r.rain,rangeTxt=r.rangeTxt,rangeH=r.rangeHours,adjPk=r.adjPeak;
+ // Sin conexión no usamos el bloque "current" guardado (queda viejo): tomamos la fila horaria de la hora actual del campo.
+ if(offline)c={time:cur.t,temperature_2m:cur.T,relative_humidity_2m:cur.H,wind_speed_10m:cur.W,shortwave_radiation:cur.R,precipitation:0};
+ var col,big,msg;
  function causa(a){var cs=[];if(a.R>=500)cs.push('sol fuerte');if(a.W<=2.5)cs.push('poco viento');return cs.length?cs.join(' y '):'la carga de sol y viento'}
- if(cur.b>=TH(0)){col=ZC[zone(cur.b)];big='Recomendación: ACTIVAR ASPERSORES';msg='Zona de '+ZN[zone(cur.b)].toLowerCase()+' (ITH base '+cur.b.toFixed(1)+').'}
- else if(firstAl){var s=+firstAl.t.slice(11,13)-1;col=ZC[1];
+ if(r.action==='activate'){var zc=zone(cur.b);col=ZC[zc];big='Recomendación: ACTIVAR ASPERSORES';msg='Zona de '+ZN[zc].toLowerCase()+' (ITH base '+cur.b.toFixed(1)+').'}
+ else if(r.action==='prepare'){var s=r.activateHour;col=ZC[1];
   if(s<0){big='PREPARAR: activar lo antes posible';msg='Se espera alerta a las 00:00 (primera hora del día). Conviene activar antes del pico.'}
   else{big='PREPARAR: activar a las '+pad2(s)+':00';msg='Se espera alerta desde las '+hh(firstAl.t)+'. Conviene activar antes del pico, no cuando ya hay jadeo.'}
  }
  else{col=ZC[0];big='NO HACE FALTA';msg='En las próximas 12 h el ITH máximo previsto es '+bpeak.toFixed(1)+', por debajo de '+TH(0)+'.'}
  var extra='';
  // Advertencia (no cambia la recomendación): el ITH base no pide riego, pero con sol/viento la carga corregida supera el umbral.
- if(cur.b<TH(0)&&!firstAl&&adjL.length){
-  var f0=adjL[0],l0=adjL[adjL.length-1],sH=+f0.t.slice(11,13),eH=+l0.t.slice(11,13)+1;
-  extra+='<p class="sub"><b style="color:var(--ink)">Vigilar</b> '+pad2(sH)+':00'+(eH-sH>1?' a '+pad2(eH)+':00':'')+': con '+causa(adjPk)+' la carga corregida llegaría a '+adjPk.v.toFixed(1)+'. Si hay jadeo, activá.</p>';
+ if(r.vigilar){
+  var vg=r.vigilar,sH=vg.startHour,eH=vg.endHour;
+  extra+='<p class="sub"><b style="color:var(--ink)">Vigilar</b> '+pad2(sH)+':00'+(eH-sH>1?' a '+pad2(eH)+':00':'')+': con '+vg.causes+' la carga corregida llegaría a '+vg.peak.toFixed(1)+'. Si hay jadeo, activá.</p>';
  }
  if(rangeTxt)extra+='<p class="sub">Horario de aspersión: '+rangeTxt+(rangeH?' ('+rangeH+' h)':'')+'.</p>';
  else if(bpeak>=TH(0))extra+='<p class="sub">Pico previsto: ITH base '+bpeak.toFixed(1)+'.</p>';
@@ -293,7 +310,13 @@ function render(note){
  $('cT').className=cur.T>=35?'kpi alr':'kpi';
  $('cR').className=cur.R>=800?'kpi alr':'kpi';
  $('ith').textContent='ITH '+cur.v.toFixed(1)+' · '+ZN[cur.z];
- $('upd').textContent=(note||'Actualizado '+c.time.slice(11,16))+' · rad. '+(data._sat?'satélite'+(data._r&&Math.abs(data._r-1)>0.1?' (proy. ×'+data._r.toFixed(2)+')':''):'modelo');
+ if(offline){
+  $('upd').style.color=ageH>6?'#D97706':'';
+  $('upd').textContent=warnText;
+ }else{
+  $('upd').style.color='';
+  $('upd').textContent=(note||'Actualizado '+c.time.slice(11,16))+' · rad. '+(data._sat?(data._satIsInstant?'satélite inst.':'satélite')+(data._r&&Math.abs(data._r-1)>0.1?' (proy. ×'+data._r.toFixed(2)+')':''):'modelo');
+ }
  drawChart(cur,idx,at,date);drawStrip(idx,at,date);
  if(selHour!=null)infoFor(selHour);
 }
@@ -484,6 +507,8 @@ $('strip').addEventListener('click',function(ev){var t=ev.target;if(t&&t.getAttr
 document.addEventListener('visibilitychange',function(){
  if(!document.hidden&&data&&Date.now()-(data._ts||0)>10*60*1000)fetchW();
 });
+window.addEventListener('offline',function(){if(data)render(null,{offline:true,downloadedAt:data._ts})});
+window.addEventListener('online',function(){fetchW()});
 if(!LS.getItem('loc')&&navigator.geolocation){$('gps').click()}else fetchW();
 setInterval(fetchW,30*60*1000);
 
@@ -510,6 +535,9 @@ function urlBase64ToUint8Array(base64String) {
 var swRegistration = null;
 var VAPID_PUBLIC_KEY = 'BCT2DednHhMsDVX_2VOWUNcWceQYdO27sAeH8BA6fwqqCKFmD0O6XT-BIWmR4VpTPmkdAYPXLV0mqRbgPT5qTZY';
 var PUSH_SERVER_URL = 'https://ith-t77o.onrender.com';
+// Si el servidor define API_TOKEN, poné el mismo valor acá (viaja en el código; es solo anti-abuso).
+var API_TOKEN = '';
+function pushHeaders(){var h={'Content-Type':'application/json'};if(API_TOKEN)h['x-api-token']=API_TOKEN;return h}
 
 function initPushNotifications(reg){
   swRegistration = reg;
@@ -546,7 +574,7 @@ $('btnNotif').onclick = function(){
       sub.unsubscribe().then(function(){
         fetch(PUSH_SERVER_URL + '/api/unsubscribe', {
           method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+          headers: pushHeaders(),
           body: JSON.stringify({ endpoint: sub.endpoint })
         }).catch(function(){});
         updateNotifUI(false);
@@ -562,7 +590,7 @@ $('btnNotif').onclick = function(){
           }).then(function(newSub){
             fetch(PUSH_SERVER_URL + '/api/subscribe', {
               method: 'POST',
-              headers: {'Content-Type': 'application/json'},
+              headers: pushHeaders(),
               body: JSON.stringify({
                 subscription: newSub,
                 location: loc

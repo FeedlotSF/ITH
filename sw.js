@@ -1,16 +1,19 @@
-const CACHE_NAME = 'estres-calorico-v3';
+const CACHE_NAME = 'estres-calorico-v4';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
+  './decision.js',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE);
+      // Se guarda cada archivo por separado: si uno falla (por ejemplo el nombre con acentos),
+      // el resto igual queda cacheado y la app puede abrir sin conexión.
+      return Promise.all(ASSETS_TO_CACHE.map((url) => cache.add(url).catch(() => null)));
     }).then(() => self.skipWaiting())
   );
 });
@@ -29,38 +32,59 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+function cachePut(request, response) {
+  if (response && response.ok && request.method === 'GET') {
+    caches.open(CACHE_NAME).then((cache) => cache.put(request, response));
+  }
+}
+
 self.addEventListener('fetch', (event) => {
-  if (event.request.url.includes('open-meteo.com') || event.request.url.includes('/api/')) {
+  const req = event.request;
+  if (req.method !== 'GET' || !/^https?:/.test(req.url)) return;
+  const url = new URL(req.url);
+
+  // Clima y backend: red directa, sin cachear en el SW (la app guarda su propio pronóstico).
+  if (url.hostname.indexOf('open-meteo.com') !== -1 || url.pathname.indexOf('/api/') === 0) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(req).catch(() => new Response('', { status: 503, statusText: 'Offline' }))
     );
     return;
   }
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) {
-        return cachedResponse;
-      }
-      return fetch(event.request).then((networkResponse) => {
-        if (
-          networkResponse &&
-          networkResponse.status === 200 &&
-          (event.request.url.startsWith('http') || event.request.url.startsWith('https'))
-        ) {
-          const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-        return networkResponse;
+  // Navegación: red primero; sin red, se sirve el HTML guardado.
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req).then((res) => {
+        cachePut(req, res.clone());
+        return res;
       }).catch(() => {
-        return caches.match('./index.html');
-      });
-    })
+        return caches.match('./index.html').then((r) => r || caches.match('./'));
+      })
+    );
+    return;
+  }
+
+  // Mismo origen (HTML, manifest, íconos, sw): cache primero.
+  if (url.origin === self.location.origin) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+        return fetch(req).then((res) => {
+          cachePut(req, res.clone());
+          return res;
+        }).catch(() => new Response('', { status: 404, statusText: 'Offline' }));
+      })
+    );
+    return;
+  }
+
+  // Terceros (por ejemplo Google Fonts): red; si falla, el navegador usa la fuente de sistema.
+  event.respondWith(
+    fetch(req).catch(() => new Response('', { status: 503, statusText: 'Offline' }))
   );
 });
 
+// Manejador del evento PUSH remoto (cuando llega la notificación con app cerrada)
 self.addEventListener('push', (event) => {
   let data = {
     title: '⚠️ Alerta de Estrés Calórico',
@@ -91,6 +115,7 @@ self.addEventListener('push', (event) => {
   );
 });
 
+// Al tocar la notificación en el celular, abrir la app
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const urlToOpen = event.notification.data && event.notification.data.url ? event.notification.data.url : './index.html';
@@ -98,7 +123,7 @@ self.addEventListener('notificationclick', (event) => {
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if ((client.url.includes('index.html') || client.url.endsWith('/ITH/')) && 'focus' in client) {
+        if (client.url.indexOf(self.location.origin) === 0 && 'focus' in client) {
           return client.focus();
         }
       }

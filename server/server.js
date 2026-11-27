@@ -240,54 +240,62 @@ async function sendTo(item, message, report) {
   }
 }
 
+function shortState(r) {
+  if (r.action === 'activate') return 'activar riego';
+  if (r.action === 'prepare') return 'preparar riego';
+  if (r.vigilar) return 'vigilar ' + hm(r.vigilar.startHour) + ' a ' + hm(r.vigilar.endHour);
+  return 'no hace falta regar';
+}
+
 /*
  * Máximo 2 avisos por día por dispositivo:
- *  1) resumen de la mañana (7 a 12 h locales), incluso "hoy no hace falta";
- *  2) aviso previo al riego (1 h antes) o cambio de "no hace falta" a activar.
- * Nunca antes de las 6 h locales y sin repetir el mismo estado.
+ *  1) primer resumen entre 7:00 y 9:59 locales (simula aviso 8:00);
+ *  2) segundo resumen entre 10:00 y 11:59 locales (simula aviso 10-11).
+ * Siempre se envían, incluso si hoy no hace falta regar.
  */
 async function maybeNotify(item, r, parts, report) {
   const date = parts.date;
+  const hour = parts.hour;
   let n = item.notify;
   if (!n || n.date !== date) {
     n = item.notify = {
       date,
       count: 0,
-      morning: false,
-      pre: false,
-      change: false,
-      lastSummaryAction: 'none',
-      lastStateKey: 'none'
+      first: false,
+      second: false,
+      morningAction: 'none',
+      morningShort: 'sin aviso previo hoy'
     };
   }
-  if (parts.hour < 6 || n.count >= 2) return;
+  if (n.count >= 2) return;
 
-  const sk = D.stateKey(r);
-  let message = null;
-
-  if (!n.morning && parts.hour >= 7 && parts.hour < 12) {
-    message = summaryMessage(r, item.location.name || 'tu campo');
-    n.morning = true;
-    n.lastSummaryAction = r.action;
-    n.lastStateKey = sk;
-  } else if (!n.change && n.lastSummaryAction === 'none' && r.action !== 'none') {
-    message = changeMessage(r, item.location.name || 'tu campo');
-    n.change = true;
-    n.lastSummaryAction = r.action;
-    n.lastStateKey = sk;
-  } else if (!n.pre && r.action === 'prepare' && r.activateHour >= 6) {
-    const nowMin = parts.hour * 60 + parts.minute;
-    const actMin = r.activateHour * 60;
-    if (nowMin >= actMin - 60 && nowMin <= actMin + 15) {
-      message = preMessage(r, item.location.name || 'tu campo');
-      n.pre = true;
-      n.lastStateKey = sk;
-    }
+  // Ventana 1: ~8:00 (7 a 9:59 locales). Siempre se envía.
+  if (!n.first && hour >= 7 && hour < 10) {
+    const base = summaryMessage(r, item.location.name || 'tu campo');
+    const m = { title: 'Resumen 8:00: ' + base.title, body: base.body };
+    n.first = true;
+    n.morningAction = r.action;
+    n.morningShort = shortState(r);
+    n.count++;
+    await sendTo(item, m, report);
+    return;
   }
 
-  if (!message) return;
-  n.count++;
-  await sendTo(item, message, report);
+  // Ventana 2: 10:00-11:59 locales. Siempre se envía, con la proyección actualizada.
+  if (!n.second && hour >= 10 && hour < 12) {
+    const ahora = summaryMessage(r, item.location.name || 'tu campo');
+    const cambio = n.morningAction !== r.action;
+    const m = {
+      title: cambio ? 'Cambió el pronóstico: ' + shortState(r) : 'ITH del día: ' + shortState(r),
+      body: 'Esta mañana (' + n.morningShort + '). Ahora a las ' + D.pad2(hour) + ':00, ' +
+        ahora.body +
+        (r.activateHour >= 0 ? ' Activá los aspersores a las ' + D.pad2(r.activateHour) + ':00.' : '')
+    };
+    n.second = true;
+    n.count++;
+    await sendTo(item, m, report);
+    return;
+  }
 }
 
 let checkRunning = false;

@@ -1,27 +1,28 @@
-# PWA y notificaciones push para estrés calórico
+# Aviso automático para estrés calórico
 
-La app (`estres-calorico.html`) y el servidor (`server/server.js`) usan **la misma lógica de decisión** en `decision.js`. Así el aviso que llega al celular no contradice lo que muestra la pantalla.
+La aplicación web (`index.html`) y el servidor (`server/server.js`) comparten **la misma lógica de decisión** en `decision.js`. Así el aviso que llega al celular no contradice lo que muestra la pantalla.
 
 ---
 
 ## 1. Qué avisos envía
 
-Máximo **2 por día** por dispositivo, nunca antes de las 6 h locales del campo:
+Máximo **2 por día** por dispositivo, sin avisar antes de las 6 h locales del campo.
 
-1. **Resumen de la mañana** (entre 7 y 12 h): se envía siempre, incluso si no hace falta regar.
+1. **Resumen de la mañana** (entre las 7:00 y las 9:59 h locales): se envía siempre, incluso si hoy no hace falta regar.
    - `Hoy no hace falta regar`
-   - `Hoy: activar a las 11:00`
-   - `Hoy: vigilar 12:00 a 13:00` (el ITH base no pide riego, pero sol/viento elevan la carga corregida)
-2. **Segundo aviso**, solo uno de estos:
-   - **Previo al riego**, 1 h antes de la hora de activación (si el ITH base lo requiere).
-   - **Cambio de pronóstico**: si a la mañana decía "no hace falta" y después pasa a preparar/activar.
+   - `Hoy: activar a las 8:00` (hora de activación)
+   - `Hoy: vigilar 12:00 a 13:00` (el ITH base no pide riego, pero el sol o el viento elevan la carga corregida)
+
+2. **Segundo aviso**, siempre entre las 10:00 y las 11:59 h locales:
+   - Confirma el pronóstico actualizado (si a la mañana decía “no hace falta” y ahora pasa a preparar/activar).
+   - Si no hubo aviso previo ese día, este es el segundo aviso.
 
 No se repite el mismo estado y no se avisa de madrugada.
 
 ### Datos que usa
 - Pronóstico horario de Open-Meteo (ITH base, viento, lluvia).
 - Radiación satelital horaria (GOES-19 vía Open-Meteo Satellite API) para el historial y la proyección de nubes.
-- Radiación instantánea nativa (~10 min, ~20 min de demora) para el valor "actual".
+- Radiación instantánea nativa (~10 min, ~20 min de demora) para el valor “actual”.
 - La hora local se calcula con el `utc_offset_seconds` del campo, no con la zona del celular.
 
 ---
@@ -46,11 +47,11 @@ Endpoints:
 | POST | `/api/unsubscribe` | sí* | Baja |
 | GET/POST | `/api/cron` | sí* | Ejecuta el chequeo (lo llama el cron externo) |
 
-\* Solo si definís `API_TOKEN`. Si está vacío, quedan abiertos para pruebas.
+*Solo si se define `API_TOKEN`. Si está vacío, quedan abiertos para pruebas.
 
 Variables de entorno:
 
-- `API_TOKEN`: token simple anti-abuso. Poné el mismo valor en `API_TOKEN` dentro de `estres-calorico.html`.
+- `API_TOKEN`: token simple anti-abuso. Poné el mismo valor en `API_TOKEN` dentro de `index.html`.
 - `APP_URL`: URL de la app que se abre al tocar la notificación (si falta, el service worker abre la app desde su propio ámbito).
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_EMAIL`: claves push (hay valores por defecto para probar).
 - `SUBS_FILE`: ruta alternativa del JSON de suscripciones.
@@ -66,7 +67,7 @@ Variables de entorno:
    - **Root Directory vacío** (raíz del repo): Build `npm --prefix server install`, Start `node server/server.js`.
    - **Root Directory `server`**: Build `npm install`, Start `node server.js`. El archivo `server/decision.js` reexporta la lógica compartida de la raíz.
 4. Configurá `API_TOKEN` y, si querés, `APP_URL`.
-5. En `estres-calorico.html`, poné la URL de Render en `PUSH_SERVER_URL` y el mismo token en `API_TOKEN`.
+5. En `index.html`, poné la URL de Render en `PUSH_SERVER_URL` y el mismo token en `API_TOKEN`.
 
 ### Render gratis se duerme
 
@@ -97,6 +98,17 @@ El plan free suspende el servicio tras unos minutos sin tráfico, y con él se d
 
 ---
 
-## 5. Licencia de Open-Meteo
+## 5. Lanzamiento automático del servidor (GitHub Actions)
+
+Para que el servidor no se duerma cuando Render lo suspende, se añadió un workflow gratuito en GitHub Actions que dispara cada 10 minutos una petición a `/api/cron`.
+
+- `on.schedule.cron: '*/10 * * * *'`
+- `workflow_dispatch` para probar manualmente.
+
+Esto despierta el servidor y ejecuta la lógica de avisos.
+
+---
+
+## 6. Licencia de Open-Meteo
 
 Open-Meteo es gratis para uso **no comercial**. Si la app se usa en una explotación comercial, revisá su licencia y contratá el plan correspondiente: https://open-meteo.com/en/license

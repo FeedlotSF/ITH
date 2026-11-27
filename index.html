@@ -505,7 +505,8 @@ svgEl.addEventListener('pointermove',function(ev){
 $('strip').addEventListener('click',function(ev){var t=ev.target;if(t&&t.getAttribute&&t.getAttribute('data-i'))selectHour(+t.getAttribute('data-i'))});
 
 document.addEventListener('visibilitychange',function(){
- if(!document.hidden&&data&&Date.now()-(data._ts||0)>10*60*1000)fetchW();
+  if(!document.hidden) syncPush();
+  if(!document.hidden&&data&&Date.now()-(data._ts||0)>10*60*1000)fetchW();
 });
 window.addEventListener('offline',function(){if(data)render(null,{offline:true,downloadedAt:data._ts})});
 window.addEventListener('online',function(){fetchW()});
@@ -548,7 +549,27 @@ function initPushNotifications(reg){
   }
   reg.pushManager.getSubscription().then(function(sub){
     updateNotifUI(!!sub);
+    if(sub) syncPush();
   });
+}
+
+// Re-registra la suscripción en el servidor cada vez que se abre la app.
+// Si el servidor perdió el archivo de suscripciones (Render reinicia el disco),
+// esta llamada las vuelve a guardar sin que el usuario tenga que activar nada.
+function syncPush(){
+  if(!swRegistration || !('PushManager' in window)) return;
+  swRegistration.pushManager.getSubscription().then(function(sub){
+    if(!sub) return;
+    fetch(PUSH_SERVER_URL + '/api/subscribe', {
+      method: 'POST',
+      headers: pushHeaders(),
+      body: JSON.stringify({ subscription: sub, location: loc })
+    }).then(function(r){
+      if(r.ok) updateNotifUI(true);
+    }).catch(function(e){
+      console.warn('No se pudo sincronizar suscripción:', e.message);
+    });
+  }).catch(function(){});
 }
 
 function updateNotifUI(isSubbed){
@@ -571,14 +592,15 @@ $('btnNotif').onclick = function(){
   swRegistration.pushManager.getSubscription().then(function(sub){
     if(sub){
       // Desactivar
-      sub.unsubscribe().then(function(){
-        fetch(PUSH_SERVER_URL + '/api/unsubscribe', {
-          method: 'POST',
-          headers: pushHeaders(),
-          body: JSON.stringify({ endpoint: sub.endpoint })
-        }).catch(function(){});
-        updateNotifUI(false);
-      });
+        sub.unsubscribe().then(function(){
+          fetch(PUSH_SERVER_URL + '/api/unsubscribe', {
+            method: 'POST',
+            headers: pushHeaders(),
+            body: JSON.stringify({ endpoint: sub.endpoint })
+          }).then(function(r){
+            if(r.ok) updateNotifUI(false);
+          }).catch(function(){});
+        });
     } else {
       // Activar
       Notification.requestPermission().then(function(permission){
@@ -587,25 +609,29 @@ $('btnNotif').onclick = function(){
           swRegistration.pushManager.subscribe({
             userVisibleOnly: true,
             applicationServerKey: convertedVapidKey
-          }).then(function(newSub){
-            fetch(PUSH_SERVER_URL + '/api/subscribe', {
-              method: 'POST',
-              headers: pushHeaders(),
-              body: JSON.stringify({
-                subscription: newSub,
-                location: loc
-              })
-            }).catch(function(){});
-            updateNotifUI(true);
-            // Mostrar notificación de prueba inmediata
-            swRegistration.showNotification('✅ Alertas ganaderas activadas', {
-              body: 'Recibirás avisos si el ITH pasa a Alerta o Peligro para ' + (loc.name || 'tu campo') + '.',
-              icon: 'icon-192.png',
-              badge: 'icon-192.png'
+            }).then(function(newSub){
+              return fetch(PUSH_SERVER_URL + '/api/subscribe', {
+                method: 'POST',
+                headers: pushHeaders(),
+                body: JSON.stringify({
+                  subscription: newSub,
+                  location: loc
+                })
+              }).then(function(r){
+                if(!r.ok) throw new Error('servidor respondió HTTP ' + r.status);
+                return r.json();
+              }).then(function(){
+                updateNotifUI(true);
+                // Mostrar notificación de prueba inmediata
+                swRegistration.showNotification('✅ Alertas ganaderas activadas', {
+                  body: 'Recibirás avisos diarios a las 8:00 y 10-11:00 según el pronóstico de tu campo.',
+                  icon: 'icon-192.png',
+                  badge: 'icon-192.png'
+                });
+              });
+            }).catch(function(e){
+              alert('Error al suscribir notificaciones: ' + e.message);
             });
-          }).catch(function(e){
-            alert('Error al suscribir notificaciones: ' + e.message);
-          });
         } else {
           alert('Debes permitir las notificaciones en el navegador de tu celular.');
         }
